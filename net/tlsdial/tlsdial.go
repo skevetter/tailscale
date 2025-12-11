@@ -15,6 +15,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
@@ -37,7 +38,11 @@ import (
 
 var counterFallbackOK int32 // atomic
 
-var debug = envknob.RegisterBool("TS_DEBUG_TLS_DIAL")
+var (
+	debug              = envknob.RegisterBool("TS_DEBUG_TLS_DIAL")
+	insecureSkipVerify = envknob.RegisterBool("TS_DEBUG_TLS_DIAL_INSECURE_SKIP_VERIFY")
+	additionalCA       = envknob.RegisterString("TS_DEBUG_TLS_DIAL_ADDITIONAL_CA_B64")
+)
 
 // tlsdialWarningPrinted tracks whether we've printed a warning about a given
 // hostname already, to avoid log spam for users with custom DERP servers,
@@ -81,7 +86,7 @@ func Config(ht *health.Tracker, base *tls.Config) *tls.Config {
 		//
 		// See https://developer.mozilla.org/en-US/docs/Mozilla/Projects/NSS/Key_Log_Format
 		if n := os.Getenv("SSLKEYLOGFILE"); n != "" {
-			f, err := os.OpenFile(n, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+			f, err := os.OpenFile(n, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -121,6 +126,10 @@ func Config(ht *health.Tracker, base *tls.Config) *tls.Config {
 			}
 		}
 		if ht != nil {
+			if insecureSkipVerify() {
+				ht.SetTLSConnectionError(cs.ServerName, nil)
+				return nil
+			}
 			defer func() {
 				if retErr != nil && cert != nil {
 					// Is it a MITM SSL certificate from a well-known network appliance manufacturer?
@@ -160,6 +169,19 @@ func Config(ht *health.Tracker, base *tls.Config) *tls.Config {
 		}
 		for _, cert := range cs.PeerCertificates[1:] {
 			opts.Intermediates.AddCert(cert)
+		}
+		if ca := additionalCA(); len(ca) > 0 {
+			if caBytes, err := base64.StdEncoding.DecodeString(ca); err != nil {
+				log.Printf("cannot decode %v", err)
+			} else {
+				pool := x509.NewCertPool()
+
+				if ok := pool.AppendCertsFromPEM(caBytes); !ok {
+					log.Print("cannot append certs from PEM")
+				} else {
+					opts.Roots = pool
+				}
+			}
 		}
 		_, errSys := cs.PeerCertificates[0].Verify(opts)
 		if debug() {
