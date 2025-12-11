@@ -640,6 +640,7 @@ func getLocalBackend(ctx context.Context, logf logger.Logf, logID logid.PublicID
 	}
 
 	if startProxy != nil {
+		dialer.UserDialCustomResolverDial = dns.Quad100ResolverDial(sys.DNSManager.Get())
 		go startProxy(logf, dialer)
 	}
 
