@@ -20,6 +20,7 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+project_name: tailscale
 release:
   github:
     owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
