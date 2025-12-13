@@ -387,7 +387,7 @@ func NewUserspaceEngine(logf logger.Logf, conf Config) (_ Engine, reterr error) 
 	conf.Dialer.SetTUNName(tunName)
 	conf.Dialer.SetNetMon(e.netMon)
 	conf.Dialer.SetBus(e.eventBus)
-	e.dns = dns.NewManager(logf, conf.DNS, e.health, conf.Dialer, fwdDNSLinkSelector{e, tunName}, conf.ControlKnobs, runtime.GOOS)
+	e.dns = dns.NewManager(logf, conf.DNS, e.health, conf.Dialer, fwdDNSLinkSelector{e, tunName}, conf.ControlKnobs, runtime.GOOS, e.eventBus)
 
 	// TODO: there's probably a better place for this
 	sockstats.SetNetMon(e.netMon)
@@ -550,6 +550,23 @@ func NewUserspaceEngine(logf logger.Logf, conf Config) (_ Engine, reterr error) 
 			f()
 		}
 		e.linkChangeQueue.Add(func() { e.linkChange(&cd) })
+	})
+	eventbus.SubscribeFunc(ec, func(update tstun.DiscoKeyAdvertisement) {
+		e.logf("wgengine: got TSMP disco key advertisement from %v via eventbus", update.Src)
+		if e.magicConn == nil {
+			e.logf("wgengine: no magicConn")
+			return
+		}
+
+		pkt := packet.TSMPDiscoKeyAdvertisement{
+			Key: update.Key,
+		}
+		peer, ok := e.PeerForIP(update.Src)
+		if !ok {
+			e.logf("wgengine: no peer found for %v", update.Src)
+			return
+		}
+		e.magicConn.HandleDiscoKeyAdvertisement(peer.Node, pkt)
 	})
 	e.eventClient = ec
 	e.logf("Engine created.")
